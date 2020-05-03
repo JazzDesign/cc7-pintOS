@@ -54,21 +54,17 @@ sema_init (struct semaphore *sema, unsigned value)
 void
 sema_down (struct semaphore *sema)
 {
-    enum intr_level old_level;
-
-    ASSERT (sema != NULL);
-    ASSERT (!intr_context ());
-
-    old_level = intr_disable ();
-    while (sema->value == 0)
+  enum intr_level old_level;
+  ASSERT (sema != NULL);
+  ASSERT (!intr_context ());
+  old_level = intr_disable ();
+  while (sema->value == 0) 
     {
-        thread_current()->waiting_for_sema=sema;
-        list_insert_ordered(&sema->waiters, &thread_current ()->elem,(list_less_func *)&greatest_priority,NULL);
-        thread_block();
+      list_push_back (&sema->waiters, &thread_current ()->elem);
+      thread_block ();
     }
-    thread_current()->waiting_for_sema=NULL;
-    sema->value--;
-    intr_set_level (old_level);
+  sema->value--;
+  intr_set_level (old_level);
 }
 
 /* Down or "P" operation on a semaphore, but only if the

@@ -5,6 +5,9 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include <kernel/list.h>
+
+
 
 
 /* States in a thread's life cycle. */
@@ -95,16 +98,18 @@ struct thread
     struct list_elem elem;              /* List element. */
     // struct list donations;
     // struct list_elem donor;
-
+    int exit_error;
     struct lock *waiting_for;      /*for what lock is waiting for*/
     struct semaphore *waiting_for_sema;
     struct list locks_holded;
-    struct list lista_hijos; //lista de procesos hijos
+    struct list lista_proc_hijos; //lista de procesos hijos
     int nice;
     int32_t recent_cpu;//tomar en cuenta
     struct file* self;
     struct list files;
-    struct semaphore child_lock;   
+    struct semaphore lock_hijo;
+    int espera;   
+    bool success;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -116,6 +121,14 @@ struct thread
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
 };
+
+  struct hijo {
+      int tid;
+      struct list_elem elem;
+      int exit_error;
+      bool used;
+    };
+
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.

@@ -18,6 +18,8 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 static void tokenizar(char * linea_comando, char* argv[]);
@@ -34,7 +36,7 @@ process_execute (const char *file_name)
   char *f_name;
   tid_t tid;  
   char *aux;
-
+   struct thread *cur = thread_current ();
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
@@ -50,8 +52,12 @@ process_execute (const char *file_name)
   free(f_name);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+ 
   
-   sema_down(&thread_current()->child_lock);
+
+  sema_down(&thread_current()->lock_hijo);
+
+
   return tid;
 }
 
@@ -74,8 +80,14 @@ start_process (void *file_name_)
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
-  if (!success) 
-    thread_exit ();
+  if (!success) {
+    thread_current()->padre->success=false;
+    sema_up(&thread_current()->padre->lock_hijo);
+    thread_exit();
+  }else{
+    thread_current()->padre->success=true;
+    sema_up(&thread_current()->padre->lock_hijo);
+  }
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -99,7 +111,6 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 { 
-            printf(">>>>>>>>>>W<<<<<<\n");
   return -1;
 }
 
@@ -107,16 +118,29 @@ process_wait (tid_t child_tid UNUSED)
 void
 process_exit (void)
 {
+
+
+
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+
+  printf("%s: exit(%d)\n", cur->name, cur->exit_error);
+
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
-  printf("aqui!!!!! moru\n");
+  
+
+    if(cur->exit_error==-100)
+      matar_proc(-1);
+
+  
+   file_close(thread_current()->self);
+
+
   pd = cur->pagedir;
   if (pd != NULL) 
     {
-        printf("aqui!!!!! moru 2 veces :(\n");
       /* Correct ordering here is crucial.  We must set
          cur->pagedir to NULL before switching page directories,
          so that a timer interrupt can't switch back to the
@@ -124,12 +148,15 @@ process_exit (void)
          directory before destroying the process's page
          directory, or our active page directory will be one
          that's been freed (and cleared). */
-
+        
       cur->pagedir = NULL;
       pagedir_activate (NULL);
       pagedir_destroy (pd);
   
     }
+
+
+
 }
 
 /* Sets up the CPU for running user code in the current
@@ -140,10 +167,8 @@ process_activate (void)
 {
 
   struct thread *t = thread_current ();
-
   /* Activate thread's page tables. */
   pagedir_activate (t->pagedir);
-
   /* Set thread's kernel stack for use in processing
      interrupts. */
   tss_update ();
@@ -346,9 +371,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   success = true;
 
- done:
-  /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  
+  thread_current()->self = file;
+
+  done:
+
   return success;
 }
 
@@ -551,3 +578,20 @@ install_page (void *upage, void *kpage, bool writable)
     }
    
   }
+
+
+
+void close_all(struct list* files)
+{
+  struct list_elem *e;
+  while(!list_empty(files))
+  {
+    e = list_pop_front(files);
+
+    struct proc_file *f = list_entry (e, struct proc_file, elem);
+          
+          file_close(f->ptr);
+          list_remove(e);
+          free(f);
+  }
+}

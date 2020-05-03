@@ -577,8 +577,7 @@ idle (void *idle_started_ UNUSED)
         /* Let someone else run. */
         intr_disable ();
         thread_block ();
-
-        /* Re-enable interrupts and wait for the next one.
+        /* Re-enable interrupts and wait for the next one.zzz
            The `sti' instruction disables interrupts until the
            completion of the next instruction, so these two
            instructions are executed atomically.  This atomicity is
@@ -666,14 +665,15 @@ init_thread (struct thread *t, const char *name, int priority)
     t->magic = THREAD_MAGIC;
     list_init(&t->locks_holded);
     t->donation=0;
-    list_init(&t->lista_hijos);
+    list_init(&t->lista_proc_hijos);
     list_init(&t->files);
     t->padre=running_thread();
-    sema_init(&t->child_lock,0);
+    sema_init(&t->lock_hijo,0);
     t->waiting_for=NULL;
     t->waiting_for_sema=NULL;
     list_push_back (&all_list, &t->allelem);
     t->self=NULL;
+    t->espera=0;
     // list_init(&t->donations);
 
     // t->waiting_for=NULL;
@@ -706,8 +706,11 @@ greatest_priority(struct list_elem *a,struct list_elem *b,void *aux UNUSED){
 static struct thread *
 next_thread_to_run (void)
 {
+
     if (list_empty (&ready_list))
+    {
         return idle_thread;
+    }
     else
         return list_entry (list_pop_front (&ready_list), struct thread, elem);
 }

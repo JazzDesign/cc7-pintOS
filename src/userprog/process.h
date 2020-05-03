@@ -9,13 +9,10 @@ int process_wait (tid_t);
 void process_exit (void);
 void process_activate (void);
 
-struct hijo
-{
-	int pid;
-	int estado;
-	int espera;
-	int salida;
-	int estado_de_carga;
+struct proc_file {
+	struct file* ptr;
+	int fd;
+	struct list_elem elem;
 };
 
 #endif /* userprog/process.h */
