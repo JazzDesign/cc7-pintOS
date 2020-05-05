@@ -26,14 +26,14 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f) 
 {
+  
+  if(f->esp==0x804efff){
+    matar_proc(-1);
+  }
   int * sp = f->esp;
-
   direccion(sp);
-  
-  int system_call=*sp;
+  int system_call = * sp;
 
-  
- 
 
   //write
   if(system_call==SYS_WRITE)
@@ -43,16 +43,21 @@ syscall_handler (struct intr_frame *f)
     direccion(sp+1);
     putbuf(*(sp+2),*(sp+3));
     f->eax = *(sp+3);
+
+  }else if(system_call==SYS_CREATE){
+    direccion(sp+2);
+    direccion(*(sp+1));
+    f->eax = filesys_create(*(sp+1),*(sp+2));
   }
 
   //system exit
   else if(system_call==SYS_EXIT)
   {
+
     direccion((sp+1));
     matar_proc(*(sp+1));
   }
-
-
+  
 }
 
 
@@ -60,8 +65,9 @@ void * direccion(const void *sp){
 
   if (!is_user_vaddr(sp))
   {
-    printf("entreo 1\n");
+
     matar_proc(-1);
+
     return 0;
   }
 
@@ -69,9 +75,8 @@ void * direccion(const void *sp){
   
   if (!ptr)
   {
-        printf("entreo 2\n");
-
     matar_proc(-1);
+
     return 0;
   }
   return ptr;

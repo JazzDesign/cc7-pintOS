@@ -55,6 +55,7 @@ process_execute (const char *file_name)
  
   
 
+
   sema_down(&thread_current()->lock_hijo);
 
 
@@ -111,7 +112,39 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 { 
-  return -1;
+ //printf("Wait : %s %d\n",thread_current()->name, child_tid);
+  struct list_elem *e;
+
+  struct hijo *ch=NULL;
+  struct list_elem *e1=NULL;
+
+
+  for (e = list_begin (&thread_current()->lista_proc_hijos); e != list_end (&thread_current()->lista_proc_hijos);
+           e = list_next (e))
+        {
+          struct hijo *f = list_entry (e, struct hijo, elem);
+          if(f->tid == child_tid)
+          {
+            ch = f;
+            e1 = e;
+          }
+        }
+
+
+  if(!ch || !e1){
+    return -1;
+  }
+
+  thread_current()->espera = ch->tid;
+    
+  if(!ch->used){
+    sema_down(&thread_current()->lock_hijo);
+  }
+
+  int temp = ch->exit_error;
+  list_remove(e1);
+  
+  return temp;
 }
 
 /* Free the current process's resources. */

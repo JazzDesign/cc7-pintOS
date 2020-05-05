@@ -42,6 +42,9 @@ static struct thread *initial_thread;
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
 
+static struct lock filesystem;
+
+
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame
 {
@@ -96,6 +99,8 @@ static bool is_thread (struct thread *) UNUSED;
     list_init (&sleeping_list);
     list_init (&all_list);
     list_init (&esperando);
+    lock_init(&filesystem);
+    
     load_avg=0;
     /* Set up a thread structure for the running thread. */
     initial_thread = running_thread ();
@@ -246,6 +251,14 @@ void dormir_hasta(int64_t ticks)
 
 }
 
+void bloquear_filesys(){
+  lock_acquire(&filesystem);
+}
+
+void desbloquear_filesys(){
+
+  lock_release(&filesystem);
+}
 
 
 
@@ -309,6 +322,14 @@ thread_create (const char *name, int priority,
     /* Initialize thread. */
     init_thread (t, name, priority);
     tid = t->tid = allocate_tid ();
+    
+    struct hijo* h=malloc(100);
+    h->tid = tid;
+    h->exit_error = t->exit_error;
+    h->used = false;
+    list_push_back (&running_thread()->lista_proc_hijos, &h->elem);
+
+
 
     /* Prepare thread for first run by initializing its stack.
        Do this atomically so intermediate values for the 'stack'
@@ -794,6 +815,9 @@ allocate_tid (void)
 
     return tid;
 }
+
+
+
 
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
