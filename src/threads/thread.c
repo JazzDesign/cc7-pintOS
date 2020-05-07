@@ -688,6 +688,7 @@ init_thread (struct thread *t, const char *name, int priority)
     t->donation=0;
     list_init(&t->lista_proc_hijos);
     list_init(&t->files);
+    t->file_count=2;
     t->padre=running_thread();
     sema_init(&t->lock_hijo,0);
     t->waiting_for=NULL;

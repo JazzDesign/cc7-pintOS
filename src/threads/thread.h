@@ -108,7 +108,8 @@ struct thread
     struct file* self;
     struct list files;
     struct semaphore lock_hijo;
-    int espera;   
+    int espera;
+    int file_count;   
     bool success;
 
 #ifdef USERPROG
