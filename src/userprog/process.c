@@ -23,6 +23,7 @@
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 static void tokenizar(char * linea_comando, char* argv[]);
+
 int argc;
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -110,40 +111,38 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 { 
- //printf("Wait : %s %d\n",thread_current()->name, child_tid);
+ 
   struct list_elem *e;
+  struct hijo *h=NULL;
+  struct list_elem *e_aux=NULL;
+  struct thread *actual=thread_current(); 
+  e = list_begin (&actual->lista_proc_hijos);
 
-  struct hijo *ch=NULL;
-  struct list_elem *e1=NULL;
-
-
-  for (e = list_begin (&thread_current()->lista_proc_hijos); e != list_end (&thread_current()->lista_proc_hijos);
-           e = list_next (e))
-        {
+  while(e != list_end (&actual->lista_proc_hijos)){
+      {
           struct hijo *f = list_entry (e, struct hijo, elem);
           if(f->tid == child_tid)
           {
-            ch = f;
-            e1 = e;
+            h = f;
+            e_aux = e;
           }
         }
+        e=list_next(e);
+  }
 
-
-  if(!ch || !e1){
+  if(!h || !e_aux){
     return -1;
   }
 
-  thread_current()->espera = ch->tid;
-    
-  if(!ch->used){
-    sema_down(&thread_current()->lock_hijo);
+  actual->espera = h->tid;
+  if(!h->used){
+    sema_down(&actual->lock_hijo);
   }
 
-  int temp = ch->exit_error;
-  list_remove(e1);
-  
+  int temp = h->exit_error;
+  list_remove(e_aux);
   return temp;
 }
 
@@ -152,25 +151,15 @@ void
 process_exit (void)
 {
 
-
-
   struct thread *cur = thread_current ();
   uint32_t *pd;
-
-
   printf("%s: exit(%d)\n", cur->name, cur->exit_error);
 
   /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
-  
-
-    if(cur->exit_error==-100)
+     to the kernel-only page directory. */  
+  if(cur->exit_error==-100)
       matar_proc(-1);
-
-  
    file_close(thread_current()->self);
-
-
   pd = cur->pagedir;
   if (pd != NULL) 
     {
@@ -187,9 +176,6 @@ process_exit (void)
       pagedir_destroy (pd);
   
     }
-
-
-
 }
 
 /* Sets up the CPU for running user code in the current
@@ -301,7 +287,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
-
+  
 
   /* Open executable file. */
   char * file_name_name = malloc (strlen(file_name)+1); //solo el nombre sin argumentos
@@ -312,7 +298,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   strlcpy(copia, file_name, strlen(file_name)+1);
 
   //SACAMOS ARGUMENTOS
-  int* argv[ARGS];
+  int* argv[100];
   argc=0;
   tokenizar(file_name,argv);
   file = filesys_open (file_name_name);
@@ -404,6 +390,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   success = true;
 
+  file_deny_write(file);
   
   thread_current()->self = file;
 
@@ -621,10 +608,55 @@ void close_all(struct list* files)
   {
     e = list_pop_front(files);
 
-    struct proc_file *f = list_entry (e, struct proc_file, elem);
+    struct archivos *f = list_entry (e, struct archivos, elem);
           
           file_close(f->ptr);
           list_remove(e);
           free(f);
   }
 }
+
+
+
+
+void matar_proc(int estatus){
+
+    struct list_elem *e;
+    e=list_begin(&thread_current()->padre->lista_proc_hijos);
+    while( e != list_end (&thread_current()->padre->lista_proc_hijos)){
+       struct hijo *h = list_entry (e, struct hijo, elem);
+          if(h->tid == thread_current()->tid)
+          {
+
+            h->used = true;
+            h->exit_error = estatus;
+          }
+          e=list_next(e);
+    }
+
+  thread_current()->exit_error = estatus;
+
+  if(thread_current()->padre->espera == thread_current()->tid){
+    sema_up(&thread_current()->padre->lock_hijo);
+  }
+  thread_exit();
+}
+
+
+
+
+
+struct archivos* busqueda(struct list* files, int fd)
+{
+  struct list_elem *e;
+  e = list_begin (files);
+  while(e != list_end (files)){
+    struct archivos *f = list_entry (e, struct archivos, elem);
+          if(f->fd == fd){
+            return f;
+          }
+    e=list_next(e);      
+  }
+   return NULL;
+}
+
