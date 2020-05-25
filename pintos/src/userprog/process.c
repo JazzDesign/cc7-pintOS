@@ -17,31 +17,52 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#ifdef VM
+#include "vm/frame.h"
+#include "vm/page.h"
+#endif
+
+
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static void tokenizar(char * linea_comando, char* argv[]);
 
+int argc;
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
-process_execute (const char *file_name) 
+process_execute (const char *file_name)   
 {
+  
   char *fn_copy;
-  tid_t tid;
-
+  char *f_name;
+  tid_t tid;  
+  char *aux;
+   struct thread *cur = thread_current ();
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
+  f_name=malloc(strlen(file_name)+1);
+  strlcpy (f_name, file_name, strlen(file_name)+1);
+  f_name = strtok_r (f_name," ",&aux);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (f_name, PRI_DEFAULT, start_process, fn_copy);
+  free(f_name);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+ 
+  
+
+  sema_down(&thread_current()->lock_hijo);
+
+
   return tid;
 }
 
@@ -50,10 +71,10 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
+
   char *file_name = file_name_;
   struct intr_frame if_;
   bool success;
-
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -61,10 +82,18 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
 
+
   /* If load failed, quit. */
   palloc_free_page (file_name);
-  if (!success) 
-    thread_exit ();
+  
+  if (!success) {
+    thread_current()->padre->success=false;
+    sema_up(&thread_current()->padre->lock_hijo);
+    thread_exit();
+  }else{
+    thread_current()->padre->success=true;
+    sema_up(&thread_current()->padre->lock_hijo);
+  }
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -86,20 +115,63 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
-{
-  return -1;
+process_wait (tid_t child_tid) 
+{ 
+ 
+  struct list_elem *e;
+  struct hijo *h=NULL;
+  struct list_elem *e_aux=NULL;
+  struct thread *actual=thread_current(); 
+  e = list_begin (&actual->lista_proc_hijos);
+
+  while(e != list_end (&actual->lista_proc_hijos)){
+      {
+          struct hijo *f = list_entry (e, struct hijo, elem);
+          if(f->tid == child_tid)
+          {
+            h = f;
+            e_aux = e;
+          }
+        }
+        e=list_next(e);
+  }
+
+  if(!h || !e_aux){
+    return -1;
+  }
+
+  actual->espera = h->tid;
+  if(!h->used){
+    sema_down(&actual->lock_hijo);
+  }
+
+  int temp = h->exit_error;
+  list_remove(e_aux);
+  return temp;
 }
 
 /* Free the current process's resources. */
 void
 process_exit (void)
 {
+
   struct thread *cur = thread_current ();
   uint32_t *pd;
+  printf("%s: exit(%d)\n", cur->name, cur->exit_error);
 
   /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
+     to the kernel-only page directory. */  
+  if(cur->exit_error==-100)
+      matar_proc(-1);
+   file_close(thread_current()->self);
+
+  struct sup_pagetable *pt;
+
+  pt = cur->sup_pagetable;
+  if (pt != NULL)
+    sup_pagetable_free (pt);
+
+
   pd = cur->pagedir;
   if (pd != NULL) 
     {
@@ -110,9 +182,11 @@ process_exit (void)
          directory before destroying the process's page
          directory, or our active page directory will be one
          that's been freed (and cleared). */
+        
       cur->pagedir = NULL;
       pagedir_activate (NULL);
       pagedir_destroy (pd);
+  
     }
 }
 
@@ -122,11 +196,10 @@ process_exit (void)
 void
 process_activate (void)
 {
-  struct thread *t = thread_current ();
 
+  struct thread *t = thread_current ();
   /* Activate thread's page tables. */
   pagedir_activate (t->pagedir);
-
   /* Set thread's kernel stack for use in processing
      interrupts. */
   tss_update ();
@@ -195,7 +268,7 @@ struct Elf32_Phdr
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
 
-static bool setup_stack (void **esp);
+static bool setup_stack (void **esp, char* file_name, char** argv);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -208,21 +281,46 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
 bool
 load (const char *file_name, void (**eip) (void), void **esp) 
 {
+
+
+
+
+
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
   off_t file_ofs;
   bool success = false;
   int i;
+  char * aux;
 
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
+  
+
+
+  t->sup_pagetable = sup_pagetable_create ();
+  if (t->sup_pagetable == NULL)
+    goto done;
+
 
   /* Open executable file. */
-  file = filesys_open (file_name);
+  char * file_name_name = malloc (strlen(file_name)+1); //solo el nombre sin argumentos
+  strlcpy(file_name_name, file_name, strlen(file_name)+1);
+  file_name_name= strtok_r(file_name_name," ",&aux);
+  
+  char * copia = malloc (strlen(file_name)+1); //solo el nombre sin argumentos
+  strlcpy(copia, file_name, strlen(file_name)+1);
+
+  //SACAMOS ARGUMENTOS
+  int* argv[100];
+  argc=0;
+  tokenizar(file_name,argv);
+  file = filesys_open (file_name_name);
+
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
@@ -302,17 +400,22 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  if (!setup_stack (esp))
-    goto done;
+  if (!setup_stack (esp,copia,argv)){
+
+      goto done;
+    }
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
 
   success = true;
 
- done:
-  /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  file_deny_write(file);
+  
+  thread_current()->self = file;
+
+  done:
+
   return success;
 }
 
@@ -398,28 +501,40 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 
       /* Get a page of memory. */
       uint8_t *kpage = palloc_get_page (PAL_USER);
+    
+     
       if (kpage == NULL)
         return false;
 
       /* Load this page. */
       if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
         {
+          
           palloc_free_page (kpage);
           return false; 
+
         }
+
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
 
       /* Add the page to the process's address space. */
       if (!install_page (upage, kpage, writable)) 
         {
+
           palloc_free_page (kpage);
           return false; 
         }
+     
 
       /* Advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
+
+
+      #ifdef VM
+      ofs += PGSIZE;
+      #endif
     }
   return true;
 }
@@ -427,10 +542,23 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
 static bool
-setup_stack (void **esp) 
+setup_stack (void **esp, char * file_name,char** argv) 
 {
-  uint8_t *kpage;
-  bool success = false;
+
+
+uint8_t *kpage;
+bool success = false; 
+
+
+
+
+
+
+
+
+
+
+
 
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL) 
@@ -441,8 +569,49 @@ setup_stack (void **esp)
       else
         palloc_free_page (kpage);
     }
+
+
+
+
+  for (int i = 0; i <= argc; ++i)
+    {
+      *esp -= strlen(argv[i]) + 1;
+      memcpy(*esp,argv[i],strlen(argv[i]) + 1);
+      argv[i]=*esp;
+    }
+
+  while((int)*esp%4!=0)
+  {
+    *esp-=sizeof(char);
+    char x = 0;
+    memcpy(*esp,&x,sizeof(char));
+  }
+
+
+  int ref = 0;
+
+  *esp-=sizeof(int);
+  memcpy(*esp,&ref,sizeof(int));
+
+  for(int i=argc;i>=0;i--)
+  {
+    *esp-=sizeof(int);
+    memcpy(*esp,&argv[i],sizeof(int));
+  }
+  argc+=1;
+  int puntero = *esp;
+  *esp-=sizeof(int);
+  memcpy(*esp,&puntero,sizeof(int));
+
+  *esp-=sizeof(int);
+  memcpy(*esp,&argc,sizeof(int));
+
+  *esp-=sizeof(int);
+  memcpy(*esp,&ref,sizeof(int));
+
   return success;
 }
+
 
 /* Adds a mapping from user virtual address UPAGE to kernel
    virtual address KPAGE to the page table.
@@ -463,3 +632,80 @@ install_page (void *upage, void *kpage, bool writable)
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
 }
+
+
+    static void tokenizar(char* linea_comando, char* argv[]){
+    
+    char* aux;
+    char *token;
+    argv[argc] = strtok_r(linea_comando, " ", &aux);
+    while((token = strtok_r(NULL, " ", &aux))!=NULL)
+    {
+      argc+=1;
+      argv[(argc)] = token;
+      
+    }
+   
+  }
+
+
+
+void close_all(struct list* files)
+{
+  struct list_elem *e;
+  while(!list_empty(files))
+  {
+    e = list_pop_front(files);
+
+    struct archivos *f = list_entry (e, struct archivos, elem);
+          
+          file_close(f->ptr);
+          list_remove(e);
+          free(f);
+  }
+}
+
+
+
+
+void matar_proc(int estatus){
+
+    struct list_elem *e;
+    e=list_begin(&thread_current()->padre->lista_proc_hijos);
+    while( e != list_end (&thread_current()->padre->lista_proc_hijos)){
+       struct hijo *h = list_entry (e, struct hijo, elem);
+          if(h->tid == thread_current()->tid)
+          {
+
+            h->used = true;
+            h->exit_error = estatus;
+          }
+          e=list_next(e);
+    }
+
+  thread_current()->exit_error = estatus;
+
+  if(thread_current()->padre->espera == thread_current()->tid){
+    sema_up(&thread_current()->padre->lock_hijo);
+  }
+  thread_exit();
+}
+
+
+
+
+
+struct archivos* busqueda(struct list* files, int fd)
+{
+  struct list_elem *e;
+  e = list_begin (files);
+  while(e != list_end (files)){
+    struct archivos *f = list_entry (e, struct archivos, elem);
+          if(f->fd == fd){
+            return f;
+          }
+    e=list_next(e);      
+  }
+   return NULL;
+}
+

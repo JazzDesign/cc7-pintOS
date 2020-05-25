@@ -37,6 +37,9 @@
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
 #endif
+#ifdef VM
+#include "vm/frame.h"
+#endif
 
 /* Page directory with kernel mappings only. */
 uint32_t *init_page_dir;
@@ -70,11 +73,11 @@ static void locate_block_devices (void);
 static void locate_block_device (enum block_type, const char *name);
 #endif
 
-int main (void) NO_RETURN;
+int pintos_init (void) NO_RETURN;
 
-/* Pintos main program. */
+/* Pintos main entry point. */
 int
-main (void)
+pintos_init (void)
 {
   char **argv;
 
@@ -98,6 +101,13 @@ main (void)
   palloc_init (user_page_limit);
   malloc_init ();
   paging_init ();
+
+
+#ifdef VM
+  FT_init ();
+#endif
+
+
 
   /* Segmentation. */
 #ifdef USERPROG
@@ -129,8 +139,12 @@ main (void)
 
   printf ("Boot complete.\n");
   
-  /* Run actions specified on kernel command line. */
-  run_actions (argv);
+  if (*argv != NULL) {
+    /* Run actions specified on kernel command line. */
+    run_actions (argv);
+  } else {
+    // TODO: no command line passed to kernel. Run interactively 
+  }
 
   /* Finish up. */
   shutdown ();
@@ -282,9 +296,10 @@ static void
 run_task (char **argv)
 {
   const char *task = argv[1];
+
   
   printf ("Executing '%s':\n", task);
-#ifdef USERPROG
+#ifdef USERPROG  
   process_wait (process_execute (task));
 #else
   run_test (task);
